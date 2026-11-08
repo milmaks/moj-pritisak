@@ -36,6 +36,26 @@ final class ReadingsDb extends SQLiteOpenHelper {
         else getWritableDatabase().update("readings", c, "id=?", new String[]{Long.toString(r.id)});
     }
 
+    // Atomic and much faster for importing hundreds/thousands of measurements.
+    void saveAll(List<Reading> readings) {
+        SQLiteDatabase connection = getWritableDatabase();
+        connection.beginTransaction();
+        try {
+            for (Reading r : readings) {
+                ContentValues c = new ContentValues();
+                c.put("measured_at", r.timestamp);
+                c.put("systolic", r.sys);
+                c.put("diastolic", r.dia);
+                c.put("pulse", r.pulse);
+                c.put("note", r.note);
+                connection.insertOrThrow("readings", null, c);
+            }
+            connection.setTransactionSuccessful();
+        } finally {
+            connection.endTransaction();
+        }
+    }
+
     void delete(long id) {
         getWritableDatabase().delete("readings", "id=?", new String[]{Long.toString(id)});
     }

@@ -3,6 +3,13 @@ package rs.local.mojpritisak;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
+import android.util.Log;
 import android.app.TimePickerDialog;
 import android.content.ClipData;
 import android.content.Intent;
@@ -41,6 +48,11 @@ import java.io.File;
 import java.io.OutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.PushbackInputStream;
+import java.io.Reader;
+import java.io.IOException;
+import java.io.StringWriter;
+import java.io.PrintWriter;
 import java.util.HashSet;
 import java.util.Set;
 import java.nio.charset.StandardCharsets;
@@ -61,6 +73,8 @@ public final class MainActivity extends Activity {
     private Uri pendingPhoto;
     private File pendingPhotoFile;
     private LinearLayout page;
+    private static boolean crashReporterInstalled = false;
+    private static final String PREFS = "moj_pritisak_diagnostics";
 
     private float dp(float n) { return getResources().getDisplayMetrics().density * n; }
     private int px(float n) { return (int)(dp(n)+.5f); }
@@ -68,6 +82,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        installCrashReporter();
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
@@ -78,6 +93,7 @@ public final class MainActivity extends Activity {
             if (path != null) pendingPhotoFile = new File(path);
         }
         render();
+        showPreviousCrash();
     }
     @Override protected void onSaveInstanceState(Bundle out) {
         super.onSaveInstanceState(out);
@@ -85,6 +101,51 @@ public final class MainActivity extends Activity {
         if (pendingPhotoFile != null) out.putString("photo_path", pendingPhotoFile.getAbsolutePath());
     }
     @Override protected void onDestroy() { if (db != null) db.close(); super.onDestroy(); }
+
+    // No crash analytics or network: diagnostic stays on this device until the user copies it.
+    private void installCrashReporter() {
+        if (crashReporterInstalled) return;
+        crashReporterInstalled = true;
+        final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        final Context app = getApplicationContext();
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            try {
+                StringWriter sw = new StringWriter();
+                error.printStackTrace(new PrintWriter(sw));
+                app.getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putString("last_crash", sw.toString().substring(0, Math.min(sw.toString().length(), 7000)))
+                    .commit();
+            } catch (Throwable ignored) { }
+            if (previous != null) previous.uncaughtException(thread, error);
+            else android.os.Process.killProcess(android.os.Process.myPid());
+        });
+    }
+    private void showPreviousCrash() {
+        android.content.SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String details = prefs.getString("last_crash", null);
+        if (details == null) return;
+        prefs.edit().remove("last_crash").apply();
+        showDiagnostic("Aplikacija se prethodno zatvorila", "Sačuvan je lokalni izveštaj o grešci.\n\n" + details, false);
+    }
+    private void showDiagnostic(String title, String details, boolean manual) {
+        Log.e("MojPritisak", title + ": " + details);
+        if (isFinishing() || isDestroyed()) return;
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(details.length() > 6500 ? details.substring(0,6500) : details)
+            .setNegativeButton("Zatvori", null)
+            .setNeutralButton("Kopiraj detalje", (dialog, which) -> {
+                ClipboardManager clipboard = (ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+                if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText("Moj Pritisak greška", details));
+                toast("Detalji kopirani. Pošalji ih u razgovor radi dijagnostike.");
+            });
+        if (manual) builder.setPositiveButton("Ručni unos", (dialog, which) -> edit(null,null));
+        builder.show();
+    }
+    private static String details(Exception error) {
+        String message = error.getMessage();
+        return error.getClass().getSimpleName() + (message == null ? "" : ": " + message);
+    }
 
     private GradientDrawable background(int color, int radius, int strokeColor) {
         GradientDrawable g = new GradientDrawable();
@@ -264,35 +325,119 @@ public final class MainActivity extends Activity {
             if(requestCode==TAKE_PHOTO)cleanupTemp();
             return;
         }
-        if(requestCode==TAKE_PHOTO) {
-            if(pendingPhoto!=null)recognize(pendingPhoto);
-        } else if(requestCode==CHOOSE_PHOTO) {
-            if(data!=null && data.getData()!=null)recognize(data.getData());
-        } else if(requestCode==IMPORT_CSV) {
-            if(data!=null&&data.getData()!=null)readImport(data.getData());
-        } else if(requestCode==EXPORT_CSV||requestCode==EXPORT_PDF) {
-            if(data!=null&&data.getData()!=null)saveExport(data.getData(),requestCode==EXPORT_PDF);
+        try {
+            if(requestCode==TAKE_PHOTO) {
+                if(pendingPhoto!=null)recognize(pendingPhoto);
+                else showDiagnostic("Kamera", "Fotografija nije sačuvana (prazan URI).", true);
+            } else if(requestCode==CHOOSE_PHOTO) {
+                if(data!=null && data.getData()!=null)recognize(data.getData());
+                else showDiagnostic("Galerija", "Nije vraćena putanja do fotografije.", true);
+            } else if(requestCode==IMPORT_CSV) {
+                if(data!=null&&data.getData()!=null)readImport(data.getData());
+                else showDiagnostic("CSV uvoz", "Nije vraćena putanja do CSV fajla.", false);
+            } else if(requestCode==EXPORT_CSV||requestCode==EXPORT_PDF) {
+                if(data!=null&&data.getData()!=null)saveExport(data.getData(),requestCode==EXPORT_PDF);
+            }
+        } catch (Exception error) {
+            showDiagnostic("Greška pri izboru fajla", details(error), requestCode != IMPORT_CSV);
         }
     }
     private void cleanupTemp() {
         if (pendingPhotoFile!=null) pendingPhotoFile.delete();
         pendingPhotoFile=null;pendingPhoto=null;
     }
+    private Bitmap decodePhoto(Uri uri) throws IOException {
+        // Use ContentResolver for Samsung Gallery/document-provider content:// URIs.
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inJustDecodeBounds = true;
+        try (InputStream stream = getContentResolver().openInputStream(uri)) {
+            if (stream == null) throw new IOException("Galerija nije vratila čitljiv fajl.");
+            BitmapFactory.decodeStream(stream, null, opts);
+        }
+        if (opts.outWidth <= 0 || opts.outHeight <= 0)
+            throw new IOException("Format slike nije podržan. Probaj običan JPG/PNG.");
+        opts.inJustDecodeBounds = false;
+        opts.inSampleSize = 1;
+        // Limits unexpectedly large gallery files; 720x720 images remain unchanged.
+        while (opts.outWidth / opts.inSampleSize > 1800 || opts.outHeight / opts.inSampleSize > 1800)
+            opts.inSampleSize *= 2;
+        try (InputStream stream = getContentResolver().openInputStream(uri)) {
+            if (stream == null) throw new IOException("Ne mogu da pročitam sadržaj slike.");
+            Bitmap bitmap = BitmapFactory.decodeStream(stream, null, opts);
+            if (bitmap == null) throw new IOException("Dekodiranje slike nije uspelo.");
+            return rotateFromExif(bitmap, uri);
+        }
+    }
+    private Bitmap rotateFromExif(Bitmap bitmap, Uri uri) {
+        int orientation = ExifInterface.ORIENTATION_NORMAL;
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in != null) {
+                ExifInterface exif = new ExifInterface(in);
+                orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL);
+            }
+        } catch (Exception error) {
+            Log.w("MojPritisak", "EXIF orijentacija nije dostupna", error);
+        }
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL: matrix.setScale(-1, 1); break;
+            case ExifInterface.ORIENTATION_ROTATE_180: matrix.setRotate(180); break;
+            case ExifInterface.ORIENTATION_FLIP_VERTICAL: matrix.setScale(1, -1); break;
+            case ExifInterface.ORIENTATION_TRANSPOSE:
+                matrix.setRotate(90); matrix.postScale(-1, 1); break;
+            case ExifInterface.ORIENTATION_ROTATE_90: matrix.setRotate(90); break;
+            case ExifInterface.ORIENTATION_TRANSVERSE:
+                matrix.setRotate(-90); matrix.postScale(-1, 1); break;
+            case ExifInterface.ORIENTATION_ROTATE_270: matrix.setRotate(270); break;
+            default: return bitmap;
+        }
+        Bitmap transformed = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        if (transformed != bitmap) bitmap.recycle();
+        return transformed;
+    }
     private void recognize(Uri uri) {
         toast("Čitam brojeve sa fotografije…");
-        try {
-            InputImage image=InputImage.fromFilePath(this,uri);
-            TextRecognizer recognizer=TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
-            recognizer.process(image)
-                .addOnSuccessListener(result->{
-                    String raw=result.getText();
-                    BpParser.Result parsed=BpParser.parse(raw);
-                    if(!parsed.complete()) toast("Nisu prepoznata sva tri broja — proveri i dopuni ručno.");
-                    edit(null,parsed);
-                })
-                .addOnFailureListener(e->{toast("Skeniranje nije uspelo. Unesi rezultat ručno.");edit(null,null);})
-                .addOnCompleteListener(task->{recognizer.close();cleanupTemp();});
-        } catch(Exception e) {cleanupTemp();toast("Nije moguće učitati sliku. Izaberi drugu fotografiju.");}
+        new Thread(() -> {
+            try {
+                final Bitmap bitmap = decodePhoto(uri);
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) {bitmap.recycle();cleanupTemp();return;}
+                    try {
+                        final TextRecognizer recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+                        recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                            .addOnSuccessListener(result -> {
+                                try {
+                                    String raw = result.getText();
+                                    BpParser.Result parsed = BpParser.parse(raw);
+                                    if (parsed.complete()) edit(null, parsed);
+                                    else new AlertDialog.Builder(this)
+                                        .setTitle("Brojevi nisu potpuno očitani")
+                                        .setMessage("Tekst koji je OCR pročitao:\n" +
+                                            (raw.trim().isEmpty()?"(nijedan broj nije prepoznat)":raw.substring(0,Math.min(raw.length(),800))) +
+                                            "\n\nMožeš ručno dopuniti vrednosti u sledećem prozoru.")
+                                        .setNegativeButton("Otkaži", null)
+                                        .setPositiveButton("Dopuni ručno", (d,w)->edit(null,parsed))
+                                        .show();
+                                } catch (Exception error) {
+                                    showDiagnostic("Greška prikaza OCR rezultata", details(error), true);
+                                }
+                            })
+                            .addOnFailureListener(error -> showDiagnostic(
+                                "OCR prepoznavanje nije uspelo", details(error), true))
+                            .addOnCompleteListener(task -> { recognizer.close();bitmap.recycle();cleanupTemp(); });
+                    } catch (Exception error) {
+                        bitmap.recycle(); cleanupTemp();
+                        showDiagnostic("OCR nije mogao da se pokrene", details(error), true);
+                    }
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    cleanupTemp();
+                    showDiagnostic("Ne mogu da učitam fotografiju", details(error), true);
+                });
+            }
+        }, "bp-photo-decoder").start();
     }
 
     private EditText numBox(String label,Integer value) {
@@ -370,23 +515,60 @@ public final class MainActivity extends Activity {
     private static String key(Reading r) {
         return r.timestamp+":"+r.sys+":"+r.dia+":"+r.pulse;
     }
+    private Reader csvReader(InputStream source) throws IOException {
+        PushbackInputStream in = new PushbackInputStream(source, 3);
+        byte[] prefix = new byte[3];
+        int count = in.read(prefix);
+        if (count < 0) count = 0;
+        if (count >= 2 && (prefix[0] & 255) == 0xff && (prefix[1] & 255) == 0xfe) {
+            if (count > 2) in.unread(prefix, 2, count - 2);
+            return new InputStreamReader(in, StandardCharsets.UTF_16LE);
+        }
+        if (count >= 2 && (prefix[0] & 255) == 0xfe && (prefix[1] & 255) == 0xff) {
+            if (count > 2) in.unread(prefix, 2, count - 2);
+            return new InputStreamReader(in, StandardCharsets.UTF_16BE);
+        }
+        if (count >= 3 && (prefix[0] & 255) == 0xef && (prefix[1] & 255) == 0xbb && (prefix[2] & 255) == 0xbf)
+            return new InputStreamReader(in, StandardCharsets.UTF_8);
+        if (count > 0) in.unread(prefix, 0, count);
+        return new InputStreamReader(in, StandardCharsets.UTF_8);
+    }
     private void readImport(Uri uri) {
-        try(InputStream in=getContentResolver().openInputStream(uri)) {
-            if(in==null)throw new IllegalStateException("Fajl nije dostupan.");
-            List<Reading> readings=CsvImporter.from(new InputStreamReader(in,StandardCharsets.UTF_8));
-            Set<String> known=new HashSet<>();
-            for(Reading r:db.all())known.add(key(r));
-            List<Reading> unique=new ArrayList<>();
-            for(Reading r:readings)if(known.add(key(r)))unique.add(r);
-            if(unique.isEmpty()){toast("Nema novih valjanih merenja za uvoz.");return;}
-            new AlertDialog.Builder(this).setTitle("Uvoz merenja")
-                .setMessage("Pronađeno "+unique.size()+" novih merenja. Uvesti u lokalnu bazu?")
-                .setNegativeButton("Otkaži",null)
-                .setPositiveButton("Uvezi",(dialog,which)->{
-                    for(Reading r:unique)db.save(r);
-                    render();toast("Uvezeno "+unique.size()+" merenja.");
-                }).show();
-        }catch(Exception e){toast("Uvoz nije uspeo: "+e.getMessage());}
+        toast("Učitavam CSV...");
+        new Thread(() -> {
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new IOException("Ne mogu da otvorim izabrani CSV fajl.");
+                // UTF-8 is used by Instant BP in the normal CSV export mode.
+                List<Reading> readings = CsvImporter.from(csvReader(in));
+                if (readings.isEmpty()) throw new IOException(
+                    "CSV nema nijedno valjano merenje. Proveri da je izvezen 'Each Blood Pressure Record', a ne dnevni prosek.");
+                Set<String> known = new HashSet<>();
+                for (Reading r : db.all()) known.add(key(r));
+                List<Reading> unique = new ArrayList<>();
+                for (Reading r : readings) if (known.add(key(r))) unique.add(r);
+                runOnUiThread(() -> {
+                    if(isFinishing()||isDestroyed()) return;
+                    if(unique.isEmpty()) {toast("Sva merenja već postoje, nema novih za uvoz.");return;}
+                    new AlertDialog.Builder(this).setTitle("Uvoz merenja")
+                        .setMessage("Pronađeno " + unique.size() + " novih merenja. Uvesti u lokalnu bazu?")
+                        .setNegativeButton("Otkaži",null)
+                        .setPositiveButton("Uvezi",(dialog,which)->{
+                            new Thread(() -> {
+                                try {
+                                    db.saveAll(unique);
+                                    runOnUiThread(() -> {if(!isFinishing()&&!isDestroyed()){
+                                        render();toast("Uvezeno " + unique.size() + " merenja.");
+                                    }});
+                                } catch (Exception error) {
+                                    runOnUiThread(() -> showDiagnostic("Čuvanje CSV-a nije uspelo", details(error),false));
+                                }
+                            }, "bp-csv-save").start();
+                        }).show();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> showDiagnostic("Uvoz CSV-a nije uspeo", details(error), false));
+            }
+        }, "bp-csv-reader").start();
     }
 
     private void exportFile(boolean pdf) {

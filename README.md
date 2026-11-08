@@ -30,6 +30,10 @@ Samostalna, besplatna Android aplikacija za beleženje krvnog pritiska. Napravlj
 2. Otvori **Actions > Build Android APK > Run workflow** (ili pushuj na `main`).
 3. Ako build uspe, otvori završen workflow, preuzmi artifact `MojPritisak-debug-apk`, raspakuj i instaliraj `app-debug.apk` na telefon.
 
+**Ispravka GitHub Actions (novembar 2026):** `android-actions/setup-android@v3` pokušavao je da instalira uklonjeni Android SDK paket `tools`, pa se workflow prekidao sa `Failed to find package 'tools'`. U ovom projektu je `setup-android` ažuriran na `@v4`, uz `packages: platform-tools`. Ako si prethodnu verziju već postavio na GitHub, dovoljno je da izmeniš samo `.github/workflows/build-apk.yml`.
+
+**Ispravka zavisnosti (novembar 2026):** Ako build pada na `:app:checkDebugDuplicateClasses` zbog `kotlin-stdlib:1.8.22` i `kotlin-stdlib-jdk7/jdk8:1.6.21`, dodaj `implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')` u `dependencies` blok fajla `app/build.gradle`. Ova verzija projekta već sadrži izmenu; nema potrebe da menjaš GitHub Actions workflow.
+
 **Potpis:** Gradle automatski potpisuje debug APK razvojnim ključem. Za redovna ažuriranja moraš koristiti isti potpisni ključ; GitHub hosted runner može generisati drugačiji debug key za naredni build, pa će za ažuriranje možda biti potrebna deinstalacija (uz gubitak lokalne baze). Za dugoročno korišćenje napravi sopstveni release keystore ili koristi isti računar/keystore i čuvaj CSV rezervne kopije.
 
 ## Import iz Instant BP
@@ -53,3 +57,15 @@ OCR oslanja se na kvalitet fotografije i na dizajn ekrana aparata; može naroči
 - `.github/workflows/build-apk.yml` – automatski Android build APK-a.
 
 Provera čistog Java parsera: `javac -d /tmp/bptest app/src/main/java/rs/local/mojpritisak/BpParser.java ParserSmokeTest.java && java -cp /tmp/bptest ParserSmokeTest`.
+
+## Verzija 1.1 – dijagnostika (Samsung Galaxy S25)
+
+- Izmenjen unos iz galerije: čitanje `content://` slike preko `ContentResolver`, obrada u pozadinskoj niti, bez pretpostavke da je fajl dostupan kao klasična putanja.
+- Fotografije 720×720 ostaju u punoj rezoluciji. Čita se i EXIF rotacija (originalni Samsung JPG je 90° bočno rotiran u sirovim pikselima). Ako OCR ne pročita sve tri vrednosti, prikazuje prepoznat tekst i omogućava dopunu.
+- Greške nisu sakrivene: detalji mogu da se kopiraju iz dijaloga (nema automatskog slanja). Ako proces padne, lokalni izveštaj se prikazuje pri sledećem pokretanju.
+- CSV uvoz ide u pozadini; podržani su UTF-8/UTF-16 BOM, Instant BP pojedinačni zapisi i sopstveni CSV. Zbirni dnevni CSV se odbija umesto pogrešnog uvoza.
+- Uvoz merenja upisuje sve redove atomskom SQLite transakcijom.
+
+**Važno:** Build je i dalje potrebno uraditi kroz GitHub Actions; ovaj kod nije testiran na pravom S25, a pouzdanost ML Kit OCR-a na sedmosegmentnom Omron displeju nije zagarantovana.
+
+**Ažuriranje APK-a:** Ako Android prijavi da nova verzija ne može da se instalira preko prethodne, moguće je da GitHub Actions koristi različite debug sertifikate. Sačuvaj postojeće podatke u CSV pre deinstalacije stare verzije.

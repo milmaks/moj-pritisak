@@ -78,14 +78,19 @@ final class CsvImporter {
         List<Reading> result=new ArrayList<>();
         if(rows.isEmpty())return result;
         List<String> header=rows.get(0);
+        for (String column : header) {
+            String lower = column.toLowerCase(Locale.ROOT);
+            if (lower.contains("(morning)") || lower.contains("(night)") || lower.contains("(day)"))
+                throw new IOException("Ovo je dnevni zbirni CSV. Iz Instant BP izvezi 'Each Blood Pressure Record'.");
+        }
         int date=idx(header,"date","datum");
         int time=idx(header,"time","vreme");
-        int sys=idx(header,"systolic","gornji");
-        int dia=idx(header,"diastolic","donji");
-        int pulse=idx(header,"pulse","puls");
+        int sys=idx(header,"systolic","gornji","sys");
+        int dia=idx(header,"diastolic","donji","dia");
+        int pulse=idx(header,"pulse","puls","heart rate","hr");
         int note=idx(header,"notes","note","napomena");
         if(date<0||sys<0||dia<0||pulse<0)
-            throw new IOException("Nepoznat format. Izvezi pojedinačna merenja u CSV formatu.");
+            throw new IOException("Nepoznata CSV zaglavlja: " + String.join(" | ",header) + ". Očekujem Date, Time, Systolic, Diastolic, Pulse.");
         for(int i=1;i<rows.size();i++){
             List<String> row=rows.get(i);
             long at=date(at(row,date),at(row,time));
@@ -93,6 +98,8 @@ final class CsvImporter {
             if(at<0||s<60||s>280||d<30||d>180||p<30||p>220||s<=d)continue;
             result.add(new Reading(-1,at,s,d,p,at(row,note)));
         }
+        if(result.isEmpty() && rows.size()>1)
+            throw new IOException("Pronađeno " + (rows.size()-1) + " CSV redova, ali nijedan nije ispravan. Proveri format datuma i vrednosti.");
         return result;
     }
 }
