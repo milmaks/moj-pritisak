@@ -410,15 +410,52 @@ public final class MainActivity extends Activity {
                                 try {
                                     String raw = result.getText();
                                     BpParser.Result parsed = BpParser.parse(raw);
-                                    if (parsed.complete()) edit(null, parsed);
-                                    else new AlertDialog.Builder(this)
-                                        .setTitle("Brojevi nisu potpuno očitani")
-                                        .setMessage("Tekst koji je OCR pročitao:\n" +
-                                            (raw.trim().isEmpty()?"(nijedan broj nije prepoznat)":raw.substring(0,Math.min(raw.length(),800))) +
-                                            "\n\nMožeš ručno dopuniti vrednosti u sledećem prozoru.")
-                                        .setNegativeButton("Otkaži", null)
-                                        .setPositiveButton("Dopuni ručno", (d,w)->edit(null,parsed))
-                                        .show();
+                                    // ML Kit recognises printed LCD labels much more easily than
+                                    // seven-segment figures. Use an LCD-specific offline decoder
+                                    // for RS3 photos matching the reference layout.
+                                    String upper = raw.toUpperCase(Locale.ROOT);
+                                    boolean isRs3 = upper.contains("RS3") && upper.contains("OMRON");
+                                    if (isRs3) {
+                                        // Match the 720x720 reference coordinate system;
+                                        // scaling to 720 stabilises seven-segment probes
+                                        // across 480/1080/1440-pixel gallery exports.
+                                        Bitmap scan = bitmap;
+                                        if (Math.abs(bitmap.getWidth()-bitmap.getHeight()) <= bitmap.getWidth() * .13 &&
+                                                (bitmap.getWidth() != 720 || bitmap.getHeight() != 720)) {
+                                            scan = Bitmap.createScaledBitmap(bitmap, 720, 720, true);
+                                        }
+                                        int[] pixels = new int[scan.getWidth() * scan.getHeight()];
+                                        scan.getPixels(pixels, 0, scan.getWidth(), 0, 0,
+                                            scan.getWidth(), scan.getHeight());
+                                        Rs3LcdReader.Result lcd = Rs3LcdReader.read(
+                                            scan.getWidth(), scan.getHeight(), pixels);
+                                        if (scan != bitmap) scan.recycle();
+                                        if (lcd != null) {
+                                            Log.i("MojPritisak", "LCD seven-segment reader; confidence=" + lcd.confidence);
+                                            parsed = new BpParser.Result(lcd.sys, lcd.dia, lcd.pulse);
+                                        } else {
+                                            // The small printed 135/85 scale on an RS3 is NOT
+                                            // a blood pressure reading. Never use it as a guess.
+                                            parsed = new BpParser.Result(null, null, null);
+                                        }
+                                    }
+                                    if (parsed.complete()) {
+                                        edit(null, parsed); // Always ask user to confirm.
+                                    } else {
+                                        // Capture effectively-final reference for callback.
+                                        final BpParser.Result partial = parsed;
+                                        new AlertDialog.Builder(this)
+                                            .setTitle("LCD brojevi nisu pouzdano očitani")
+                                            .setMessage((isRs3 ?
+                                                "Prepoznat je Omron RS3, ali fotografija ne odgovara dovoljno pouzdano poznatom rasporedu LCD segmenata.\n\n" :
+                                                "OCR nije prepoznao sve vrednosti.\n\n") +
+                                                "OCR tekst:\n" +
+                                                (raw.trim().isEmpty()?"(nema teksta)":raw.substring(0,Math.min(raw.length(),650))) +
+                                                "\n\nMožeš uneti vrednosti ručno bez zatvaranja aplikacije.")
+                                            .setNegativeButton("Otkaži", null)
+                                            .setPositiveButton("Dopuni ručno", (d,w)->edit(null,partial))
+                                            .show();
+                                    }
                                 } catch (Exception error) {
                                     showDiagnostic("Greška prikaza OCR rezultata", details(error), true);
                                 }
@@ -454,9 +491,21 @@ public final class MainActivity extends Activity {
     }
     private void edit(Reading existing,BpParser.Result scanned) {
         LinearLayout content=column();content.setPadding(px(20),px(6),px(20),0);
-        EditText sys=numBox("Gornji (SYS)",existing!=null?existing.sys:scanned!=null?scanned.sys:null);
-        EditText dia=numBox("Donji (DIA)",existing!=null?existing.dia:scanned!=null?scanned.dia:null);
-        EditText pulse=numBox("Puls (PUL)",existing!=null?existing.pulse:scanned!=null?scanned.pulse:null);
+        // IMPORTANT: do not use nested conditional expressions mixing int and
+        // nullable Integer. Java unboxes null in those expressions (old NPE).
+        Integer initialSys = null, initialDia = null, initialPulse = null;
+        if (existing != null) {
+            initialSys = existing.sys;
+            initialDia = existing.dia;
+            initialPulse = existing.pulse;
+        } else if (scanned != null) {
+            initialSys = scanned.sys;
+            initialDia = scanned.dia;
+            initialPulse = scanned.pulse;
+        }
+        EditText sys=numBox("Gornji (SYS)",initialSys);
+        EditText dia=numBox("Donji (DIA)",initialDia);
+        EditText pulse=numBox("Puls (PUL)",initialPulse);
         content.addView(text("Gornji · mmHg",12,MUTED,false)); content.addView(sys,lp(-1,-2,9));
         content.addView(text("Donji · mmHg",12,MUTED,false)); content.addView(dia,lp(-1,-2,9));
         content.addView(text("Puls · otkucaji/min",12,MUTED,false)); content.addView(pulse,lp(-1,-2,9));

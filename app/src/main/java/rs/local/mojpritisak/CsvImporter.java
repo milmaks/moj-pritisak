@@ -85,12 +85,12 @@ final class CsvImporter {
         }
         int date=idx(header,"date","datum");
         int time=idx(header,"time","vreme");
-        int sys=idx(header,"systolic","gornji","sys");
-        int dia=idx(header,"diastolic","donji","dia");
+        int sys=idx(header,"systolic","gornji","sys","top");
+        int dia=idx(header,"diastolic","donji","dia","bottom");
         int pulse=idx(header,"pulse","puls","heart rate","hr");
         int note=idx(header,"notes","note","napomena");
         if(date<0||sys<0||dia<0||pulse<0)
-            throw new IOException("Nepoznata CSV zaglavlja: " + String.join(" | ",header) + ". Očekujem Date, Time, Systolic, Diastolic, Pulse.");
+            throw new IOException("Nepoznata CSV zaglavlja: " + String.join(" | ",header) + ". Očekujem Date, Time, Top, Bottom, Pulse (ili Systolic, Diastolic).");
         for(int i=1;i<rows.size();i++){
             List<String> row=rows.get(i);
             long at=date(at(row,date),at(row,time));

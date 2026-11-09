@@ -69,3 +69,54 @@ Provera čistog Java parsera: `javac -d /tmp/bptest app/src/main/java/rs/local/m
 **Važno:** Build je i dalje potrebno uraditi kroz GitHub Actions; ovaj kod nije testiran na pravom S25, a pouzdanost ML Kit OCR-a na sedmosegmentnom Omron displeju nije zagarantovana.
 
 **Ažuriranje APK-a:** Ako Android prijavi da nova verzija ne može da se instalira preko prethodne, moguće je da GitHub Actions koristi različite debug sertifikate. Sačuvaj postojeće podatke u CSV pre deinstalacije stare verzije.
+
+## Verzija 1.2 – potvrđen Instant BP CSV format
+
+Pregledan je izvezeni CSV sa zaglavljem `Date,Time,Top,Bottom,Pulse,Med,L/R,Arm or wrist,Posture,Note`.
+Parser sada podržava `Top` i `Bottom` kao odgovarajuće kolone za SYS i DIA.
+Lokalnim testom sa stvarnim korisničkim CSV-om potvrđen je uspešan prolazak svih 87 merenja kroz Java parser.
+Korisnički CSV nije uključen u izvorni ZIP radi privatnosti.
+
+Za brzi uvoz u postojeći APK priložen je i zaseban konvertovani CSV fajl koji koristi
+`Systolic` i `Diastolic` nazive kolona i zadržava sva merenja.
+
+**Napomena:** Android build v1.2 i OCR funkcija nisu testirani na telefonu;
+za tačan Android uzrok zatvaranja aplikacije potreban je crash log ili dijagnostički izveštaj iz v1.1+.
+
+## Verzija 1.3 – sedmosegmentni LCD i crash fix
+
+**Ispravljena greška pri „Dopuni ručno“:** prethodno je Java automatski pretvarala
+`null` (`Integer`) u `int` kod izraza `existing!=null?existing.sys:scanned!=null?scanned.sys:null`.
+Sada su polja pripremljena zasebno, pa se mogu otvoriti i kada OCR ne pronađe nijednu vrednost.
+
+**Dodat `Rs3LcdReader.java`:** offline prepoznavanje sedam segmenata direktno iz piksela,
+nezavisno od teksta koji čita ML Kit. Pokušava se samo kada ML Kit na fotografiji
+prepozna natpise „OMRON“ i „RS3“. Prepoznavanje koristi zone orijentisanog, približno
+kvadratnog snimka celog uređaja, kao na dostavljenoj Instant BP fotografiji (720×720),
+uz normalizaciju rezolucije. Na probnoj korisničkoj fotografiji poseban Java test
+potvrdio je **129/73 mmHg i puls 63/min**; proverena je i slabije kompresovana verzija.
+Fotografija korisnika nije uključena u ZIP projekat.
+
+Ovaj čitač **nije univerzalni OCR** i nije zagarantovan uspeh ako je aparat drugačije
+pozicioniran, u drugoj perspektivi ili ako je fotografija jako tamna. Ako procena nije
+pouzdana, aplikacija neće izmišljati broj iz štampanih oznaka 135/85 desno od ekrana:
+otvoriće se ručni unos sa praznim poljima. Korisnik mora vizuelno potvrditi sva tri broja.
+
+### Lokalni test Java LCD čitača (opciono)
+
+`Rs3LcdSmokeTest.java` može da se pokrene sa sopstvenom, uspravno orijentisanom
+720×720 PNG/JPG datotekom koja prikazuje referentni Omron RS3 snimak:
+
+```bash
+javac -d /tmp/rs3classes app/src/main/java/rs/local/mojpritisak/Rs3LcdReader.java Rs3LcdSmokeTest.java
+java -cp /tmp/rs3classes Rs3LcdSmokeTest /putanja/do/fotografije-uspravno.png
+```
+
+**Instalacija/ažuriranje:** Kod Android SDK-a dalje je potreban GitHub Actions / Android
+Studio build. Ako APK nije potpisan istim ključem kao instalirana aplikacija, sačuvaj
+CSV kroz „Izvezi CSV“ pre deinstalacije stare verzije. `android:allowBackup=false` znači
+da se lokalna SQLite baza neće automatski vratiti nakon deinstalacije.
+
+**Validacija:** `javac` test specifičnog LCD čitača i postojeći Java OCR/CSV smoke testovi
+prošli su lokalno. Kompletan Android/Gradle build i test na Samsung Galaxy S25 nisu izvršeni
+u ovom okruženju.
