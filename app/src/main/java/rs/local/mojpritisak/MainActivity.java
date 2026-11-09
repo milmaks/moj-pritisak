@@ -64,7 +64,7 @@ import java.util.List;
 import java.util.Locale;
 
 public final class MainActivity extends Activity {
-    private static final int TAKE_PHOTO = 101, CHOOSE_PHOTO = 102, EXPORT_CSV = 103, EXPORT_PDF = 104, IMPORT_CSV = 105;
+    private static final int TAKE_PHOTO = 101, CHOOSE_PHOTO = 102, EXPORT_CSV = 103, EXPORT_PDF = 104, IMPORT_CSV = 105, PHOTO_SCAN = 106, LIVE_SCAN = 107;
     private static final int BG = Color.rgb(245,247,251), DARK = Color.rgb(23,38,60);
     private static final int MUTED = Color.rgb(98,111,132), TEAL = Color.rgb(5,127,117);
     private static final int LIGHT = Color.rgb(226,236,242);
@@ -209,10 +209,11 @@ public final class MainActivity extends Activity {
         actions.addView(text("Novo merenje",17,DARK,true),lp(-1,-2,9));
         LinearLayout row = new LinearLayout(this);
         actions.addView(row,lp(-1,-2,8));
-        Button camera = button("📷  Skeniraj",true,v->capture());
+        Button camera = button("📷  Fotografija",true,v->capture());
         Button gallery = button("🖼  Iz galerije",false,v->pickImage());
         LinearLayout.LayoutParams a = new LinearLayout.LayoutParams(0,px(54),1f); a.rightMargin = px(8);
         row.addView(camera,a); row.addView(gallery,new LinearLayout.LayoutParams(0,px(54),1f));
+        actions.addView(button("📹  Live čitanje kamerom (beta)",true,v->liveScan()),lp(-1,px(48),8));
         actions.addView(button("＋  Ručni unos",false,v->edit(null,null)),lp(-1,px(45),0));
 
         LinearLayout summary = (LinearLayout)card(page,15,13);
@@ -322,16 +323,22 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data) {
         super.onActivityResult(requestCode,resultCode,data);
         if(resultCode!=RESULT_OK) {
-            if(requestCode==TAKE_PHOTO)cleanupTemp();
+            if(requestCode==TAKE_PHOTO || requestCode==PHOTO_SCAN)cleanupTemp();
             return;
         }
         try {
             if(requestCode==TAKE_PHOTO) {
-                if(pendingPhoto!=null)recognize(pendingPhoto);
+                if(pendingPhoto!=null)openCrop(pendingPhoto);
                 else showDiagnostic("Kamera", "Fotografija nije sačuvana (prazan URI).", true);
             } else if(requestCode==CHOOSE_PHOTO) {
-                if(data!=null && data.getData()!=null)recognize(data.getData());
+                if(data!=null && data.getData()!=null)openCrop(data.getData());
                 else showDiagnostic("Galerija", "Nije vraćena putanja do fotografije.", true);
+            } else if(requestCode==PHOTO_SCAN || requestCode==LIVE_SCAN) {
+                Integer sys = data!=null&&data.getIntExtra("sys",-1)>0 ? data.getIntExtra("sys",-1) : null;
+                Integer dia = data!=null&&data.getIntExtra("dia",-1)>0 ? data.getIntExtra("dia",-1) : null;
+                Integer pulse = data!=null&&data.getIntExtra("pulse",-1)>0 ? data.getIntExtra("pulse",-1) : null;
+                cleanupTemp();
+                edit(null,new BpParser.Result(sys,dia,pulse));
             } else if(requestCode==IMPORT_CSV) {
                 if(data!=null&&data.getData()!=null)readImport(data.getData());
                 else showDiagnostic("CSV uvoz", "Nije vraćena putanja do CSV fajla.", false);
@@ -346,135 +353,17 @@ public final class MainActivity extends Activity {
         if (pendingPhotoFile!=null) pendingPhotoFile.delete();
         pendingPhotoFile=null;pendingPhoto=null;
     }
-    private Bitmap decodePhoto(Uri uri) throws IOException {
-        // Use ContentResolver for Samsung Gallery/document-provider content:// URIs.
-        BitmapFactory.Options opts = new BitmapFactory.Options();
-        opts.inJustDecodeBounds = true;
-        try (InputStream stream = getContentResolver().openInputStream(uri)) {
-            if (stream == null) throw new IOException("Galerija nije vratila čitljiv fajl.");
-            BitmapFactory.decodeStream(stream, null, opts);
-        }
-        if (opts.outWidth <= 0 || opts.outHeight <= 0)
-            throw new IOException("Format slike nije podržan. Probaj običan JPG/PNG.");
-        opts.inJustDecodeBounds = false;
-        opts.inSampleSize = 1;
-        // Limits unexpectedly large gallery files; 720x720 images remain unchanged.
-        while (opts.outWidth / opts.inSampleSize > 1800 || opts.outHeight / opts.inSampleSize > 1800)
-            opts.inSampleSize *= 2;
-        try (InputStream stream = getContentResolver().openInputStream(uri)) {
-            if (stream == null) throw new IOException("Ne mogu da pročitam sadržaj slike.");
-            Bitmap bitmap = BitmapFactory.decodeStream(stream, null, opts);
-            if (bitmap == null) throw new IOException("Dekodiranje slike nije uspelo.");
-            return rotateFromExif(bitmap, uri);
-        }
+    private void liveScan() {
+        try {startActivityForResult(new Intent(this,LiveScanActivity.class),LIVE_SCAN);}
+        catch(Exception error){showDiagnostic("Live kamera",details(error),true);}
     }
-    private Bitmap rotateFromExif(Bitmap bitmap, Uri uri) {
-        int orientation = ExifInterface.ORIENTATION_NORMAL;
-        try (InputStream in = getContentResolver().openInputStream(uri)) {
-            if (in != null) {
-                ExifInterface exif = new ExifInterface(in);
-                orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION,
-                    ExifInterface.ORIENTATION_NORMAL);
-            }
-        } catch (Exception error) {
-            Log.w("MojPritisak", "EXIF orijentacija nije dostupna", error);
-        }
-        Matrix matrix = new Matrix();
-        switch (orientation) {
-            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL: matrix.setScale(-1, 1); break;
-            case ExifInterface.ORIENTATION_ROTATE_180: matrix.setRotate(180); break;
-            case ExifInterface.ORIENTATION_FLIP_VERTICAL: matrix.setScale(1, -1); break;
-            case ExifInterface.ORIENTATION_TRANSPOSE:
-                matrix.setRotate(90); matrix.postScale(-1, 1); break;
-            case ExifInterface.ORIENTATION_ROTATE_90: matrix.setRotate(90); break;
-            case ExifInterface.ORIENTATION_TRANSVERSE:
-                matrix.setRotate(-90); matrix.postScale(-1, 1); break;
-            case ExifInterface.ORIENTATION_ROTATE_270: matrix.setRotate(270); break;
-            default: return bitmap;
-        }
-        Bitmap transformed = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-        if (transformed != bitmap) bitmap.recycle();
-        return transformed;
-    }
-    private void recognize(Uri uri) {
-        toast("Čitam brojeve sa fotografije…");
-        new Thread(() -> {
-            try {
-                final Bitmap bitmap = decodePhoto(uri);
-                runOnUiThread(() -> {
-                    if (isFinishing() || isDestroyed()) {bitmap.recycle();cleanupTemp();return;}
-                    try {
-                        final TextRecognizer recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
-                        recognizer.process(InputImage.fromBitmap(bitmap, 0))
-                            .addOnSuccessListener(result -> {
-                                try {
-                                    String raw = result.getText();
-                                    BpParser.Result parsed = BpParser.parse(raw);
-                                    // ML Kit recognises printed LCD labels much more easily than
-                                    // seven-segment figures. Use an LCD-specific offline decoder
-                                    // for RS3 photos matching the reference layout.
-                                    String upper = raw.toUpperCase(Locale.ROOT);
-                                    boolean isRs3 = upper.contains("RS3") && upper.contains("OMRON");
-                                    if (isRs3) {
-                                        // Match the 720x720 reference coordinate system;
-                                        // scaling to 720 stabilises seven-segment probes
-                                        // across 480/1080/1440-pixel gallery exports.
-                                        Bitmap scan = bitmap;
-                                        if (Math.abs(bitmap.getWidth()-bitmap.getHeight()) <= bitmap.getWidth() * .13 &&
-                                                (bitmap.getWidth() != 720 || bitmap.getHeight() != 720)) {
-                                            scan = Bitmap.createScaledBitmap(bitmap, 720, 720, true);
-                                        }
-                                        int[] pixels = new int[scan.getWidth() * scan.getHeight()];
-                                        scan.getPixels(pixels, 0, scan.getWidth(), 0, 0,
-                                            scan.getWidth(), scan.getHeight());
-                                        Rs3LcdReader.Result lcd = Rs3LcdReader.read(
-                                            scan.getWidth(), scan.getHeight(), pixels);
-                                        if (scan != bitmap) scan.recycle();
-                                        if (lcd != null) {
-                                            Log.i("MojPritisak", "LCD seven-segment reader; confidence=" + lcd.confidence);
-                                            parsed = new BpParser.Result(lcd.sys, lcd.dia, lcd.pulse);
-                                        } else {
-                                            // The small printed 135/85 scale on an RS3 is NOT
-                                            // a blood pressure reading. Never use it as a guess.
-                                            parsed = new BpParser.Result(null, null, null);
-                                        }
-                                    }
-                                    if (parsed.complete()) {
-                                        edit(null, parsed); // Always ask user to confirm.
-                                    } else {
-                                        // Capture effectively-final reference for callback.
-                                        final BpParser.Result partial = parsed;
-                                        new AlertDialog.Builder(this)
-                                            .setTitle("LCD brojevi nisu pouzdano očitani")
-                                            .setMessage((isRs3 ?
-                                                "Prepoznat je Omron RS3, ali fotografija ne odgovara dovoljno pouzdano poznatom rasporedu LCD segmenata.\n\n" :
-                                                "OCR nije prepoznao sve vrednosti.\n\n") +
-                                                "OCR tekst:\n" +
-                                                (raw.trim().isEmpty()?"(nema teksta)":raw.substring(0,Math.min(raw.length(),650))) +
-                                                "\n\nMožeš uneti vrednosti ručno bez zatvaranja aplikacije.")
-                                            .setNegativeButton("Otkaži", null)
-                                            .setPositiveButton("Dopuni ručno", (d,w)->edit(null,partial))
-                                            .show();
-                                    }
-                                } catch (Exception error) {
-                                    showDiagnostic("Greška prikaza OCR rezultata", details(error), true);
-                                }
-                            })
-                            .addOnFailureListener(error -> showDiagnostic(
-                                "OCR prepoznavanje nije uspelo", details(error), true))
-                            .addOnCompleteListener(task -> { recognizer.close();bitmap.recycle();cleanupTemp(); });
-                    } catch (Exception error) {
-                        bitmap.recycle(); cleanupTemp();
-                        showDiagnostic("OCR nije mogao da se pokrene", details(error), true);
-                    }
-                });
-            } catch (Exception error) {
-                runOnUiThread(() -> {
-                    cleanupTemp();
-                    showDiagnostic("Ne mogu da učitam fotografiju", details(error), true);
-                });
-            }
-        }, "bp-photo-decoder").start();
+    private void openCrop(Uri uri) {
+        try {
+            Intent intent=new Intent(this,ScanPhotoActivity.class);
+            intent.putExtra("photo_uri",uri.toString());
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(intent,PHOTO_SCAN);
+        } catch(Exception error) {showDiagnostic("Otvaranje skenera",details(error),true);}
     }
 
     private EditText numBox(String label,Integer value) {

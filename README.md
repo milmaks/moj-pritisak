@@ -1,122 +1,63 @@
-# Moj Pritisak – Android aplikacija bez reklama
+# Moj Pritisak v1.4 — adaptivni OCR i live kamera (eksperimentalno)
 
-Samostalna, besplatna Android aplikacija za beleženje krvnog pritiska. Napravljena kao funkcionalna alternativa aplikaciji Instant Blood Pressure Tracker, ali bez kopiranja njenog izvornog koda ili brendiranja.
+Android aplikacija za beleženje krvnog pritiska bez reklama, registracije i internet dozvole. Nije medicinsko sredstvo. **Ne meri krvni pritisak**; samo čita fotografiju aparata i čuva korisnički potvrđene vrednosti.
 
-## Funkcije
+## Šta je novo u v1.4
 
-- Slikanje ekrana aparata standardnom Android kamerom ili izbor postojeće slike.
-- OCR prepoznavanje SYS (gornji), DIA (donji) i PUL (puls) pomoću *bundled* Google ML Kit modela, lokalno na telefonu.
-- Obavezna ručna provera i potvrda OCR rezultata pre snimanja; ne treba se osloniti na OCR za medicinske odluke.
-- Ručni unos, uređivanje, brisanje, napomene i datum/vreme.
-- Istorija i grafikon dnevnih proseka za 14 dana, proseci za 7 i 30 dana, današnji jutarnji i večernji prosek.
-- Lokalna SQLite baza, bez naloga, cloud servisa, oglasa, kupovina i internet dozvole.
-- Izvoz svih merenja u CSV ili PDF, kao i uvoz CSV zapisa (pojedinačna merenja) iz Instant BP-a ili ove aplikacije.
+**Galerija / fotografija:**
+1. Nakon izbora slike otvara se ekran za izdvajanje tri numeričke oblasti.
+2. ML Kit na *celoj slici* traži natpise `SYS`, `DIA` i `PULSE`, pa na osnovu njihovih pozicija predlaže oblasti za brojeve. Nisu korišćene koordinate modela Omron RS3.
+3. Korisnik može izabrati `SYS`, `DIA`, `PULS`, prevući odgovarajući okvir preko cifara i promeniti njegovu veličinu povlačenjem donjeg desnog ugla.
+4. Svaka oblast obrađuje se zasebno. Primena dodatne normalizacije kontrasta smanjuje uticaj osvetljenja.
+5. Ako obični OCR preskoči sedmosegmentne cifre, poseban `FlexibleSevenSegmentReader` automatski grupiše moguće cifre na osnovu stupaca piksela, detektuje raspone cifara i proverava svih sedam segmenata. Ovaj algoritam nema koordinate konkretnog modela aparata.
+6. Ako dva algoritma pročitaju različite brojeve, sporni broj ostaje prazan. Nijedan rezultat se ne čuva bez korisničke potvrde.
 
-## Instalacija na Galaxy S25
+**Live kamera (beta):**
+1. Dugme `Live čitanje kamerom` koristi CameraX za pregled zadnje kamere.
+2. Na približno svakih 2 sekunde traži oznake SYS/DIA/PULSE na kadru, izdvaja njihova numerička polja i pokreće oba OCR postupka.
+3. Kada 2 uzastopna potpuna očitavanja daju identičan SYS, DIA i puls, otvara se standardni dijalog za potvrdu. Nema automatskog snimanja.
+4. Live režim zahteva dozvolu za kameru. Obrada je offline. Ako automatski okvir nije dobar, u galeriji je dostupan ručni izbor oblasti.
 
-**Izvorni kod u ovom ZIP-u nije APK.** Android APK je potrebno kompajlirati. Iz ovog okruženja nije bilo moguće pokrenuti Android SDK i Gradle, pa izvorni kod još nije validiran punim Android build-om niti isproban na fizičkom telefonu.
+**Uklonjen je v1.3 reader** koji je koristio piksel-koordinate jednog Omron RS3 uzorka.
 
-### Opcija A: Android Studio
+## Realna ograničenja
 
-1. U Android Studio (na računaru) otvori folder `MojPritisak` kao projekat (`Open`).
-2. Postavi **Gradle JDK 17** i preuzmi **Android SDK 35** kada Studio to ponudi. Projekat koristi Android Gradle Plugin 8.7.3 i Gradle 8.9. (Wrapper properties postoje, wrapper JAR nije priložen; Studio koristi svoju Gradle integraciju.)
-3. Sačekaj Gradle Sync, zatim izaberi **Build > Build Bundle(s) / APK(s) > Build APK(s)**.
-4. Posle uspešnog builda, APK se nalazi u `app/build/outputs/apk/debug/app-debug.apk`.
-5. Prebaci APK na telefon (USB, Quick Share, itd.) i otvori ga. Na Samsung One UI možda će biti potrebno da za aplikaciju *My Files* dozvoliš instalaciju iz nepoznatog izvora, a opcija *Auto Blocker* može blokirati sideloading. Uključi zaštitu ponovo nakon instalacije. Instaliraj samo APK koji si sam izgradio.
+- Ovo NIJE univerzalno garantovano očitavanje svake slike ili svih modela aparata. Položaji natpisa, različite vrste LCD-a, odsjaj, veoma kos kadar, slab kontrast i skrivene cifre mogu onemogućiti automatsku detekciju. Ručno podešavanje okvira je fallback, ne zamena za proveru brojeva.
+- Automatska lokalizacija se oslanja na oznake `SYS/DIA/PULSE` u kadru. Ako nema oznaka, koriste se početni okviri koje treba podesiti.
+- Sedmosegmentni algoritam podnosi promenljive veličine i pomeranja brojčanih grupa, ali ne ispravlja proizvoljnu perspektivu niti trenira sopstveni ML model.
+- Podaci sa slike se lokalno obrađuju, ali *OCR može pogrešiti*. **Svaku vrednost obavezno uporedi sa aparatom** pre nego što je sačuvaš.
+- Live kamera nije testirana na fizičkom Samsung Galaxy S25; moguće su Android/CameraX prilagodbe.
 
-### Opcija B: GitHub Actions (bez Android Studija)
+## Testovi
 
-1. Napravi novi **privatni** GitHub repozitorijum i u njega postavi sadržaj foldera `MojPritisak` (ne sam ZIP).
-2. Otvori **Actions > Build Android APK > Run workflow** (ili pushuj na `main`).
-3. Ako build uspe, otvori završen workflow, preuzmi artifact `MojPritisak-debug-apk`, raspakuj i instaliraj `app-debug.apk` na telefon.
+Lokalno, na jednoj dostavljenoj Omron fotografiji, tri različito isečene numeričke oblasti prošle su test `FlexibleSegmentSmokeTest` sa rezultatom **129 / 73 / 63**. Prošle su i provere na malo široj zoni nakon izdvajanja displeja, kao i Java parser i CSV testovi. Nisu prošle sve transformacije: na nekim pomeranjima ivica, osvetljenjima i dvostruko uvećanom pulsu rezultat se odbacuje ili može biti netačan. Ovi testovi ne predstavljaju evaluaciju na raznovrsnim aparatima i fotografijama.
 
-**Ispravka GitHub Actions (novembar 2026):** `android-actions/setup-android@v3` pokušavao je da instalira uklonjeni Android SDK paket `tools`, pa se workflow prekidao sa `Failed to find package 'tools'`. U ovom projektu je `setup-android` ažuriran na `@v4`, uz `packages: platform-tools`. Ako si prethodnu verziju već postavio na GitHub, dovoljno je da izmeniš samo `.github/workflows/build-apk.yml`.
+## Instalacija / GitHub Actions
 
-**Ispravka zavisnosti (novembar 2026):** Ako build pada na `:app:checkDebugDuplicateClasses` zbog `kotlin-stdlib:1.8.22` i `kotlin-stdlib-jdk7/jdk8:1.6.21`, dodaj `implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')` u `dependencies` blok fajla `app/build.gradle`. Ova verzija projekta već sadrži izmenu; nema potrebe da menjaš GitHub Actions workflow.
+Potreban je Android build; ovaj ZIP sadrži **izvorni kod, ne APK**.
 
-**Potpis:** Gradle automatski potpisuje debug APK razvojnim ključem. Za redovna ažuriranja moraš koristiti isti potpisni ključ; GitHub hosted runner može generisati drugačiji debug key za naredni build, pa će za ažuriranje možda biti potrebna deinstalacija (uz gubitak lokalne baze). Za dugoročno korišćenje napravi sopstveni release keystore ili koristi isti računar/keystore i čuvaj CSV rezervne kopije.
+1. **Sačuvaj CSV rezervnu kopiju** prethodnih merenja u staroj aplikaciji (`Izvezi CSV`), pre bilo kakve deinstalacije.
+2. U postojeći GitHub repo kopiraj sadržaj foldera `MojPritisak` iz ZIP-a, uključujući `.github/workflows/build-apk.yml`.
+3. GitHub: `Actions` → `Build Android APK` → `Run workflow`. Ako uspe, preuzmi artifact `MojPritisak-debug-apk` i instaliraj `app-debug.apk`.
+4. Ako Android odbije ažuriranje zbog različitih potpisa, **ne deinstaliraj staru verziju bez sačuvanog CSV-a**; deinstalacija briše lokalnu bazu. Za dugoročne nadogradnje koristi isti stabilni keystore.
+5. Ako build padne, kopiraj poslednji deo loga iz GitHub Actions. SDK/Gradle konfiguracija i dalje koristi Gradle 8.9, AGP 8.7.3, JDK 17 i Android SDK 35.
 
-## Import iz Instant BP
+**Novo:** projekt koristi CameraX 1.5.2 i `androidx.activity:activity:1.10.1` za live pregled kamere. Iz Android Studija možeš pokrenuti i `Build APK(s)` ako imaš instaliran SDK 35.
 
-U originalnoj aplikaciji izaberi **CSV Export > Each Blood Pressure Record** (ne *Daily Blood Pressure Records*). Kopiraj izvezeni CSV na telefon i u aplikaciji `Moj Pritisak` izaberi **Uvezi merenja iz Instant BP CSV**. Podržani su uobičajeni formati datuma i CSV sa separatorima `,` ili `;`. Pre potvrde prikazuje broj pronađenih novih merenja; duplikati sa istim datumom/vremenom, SYS, DIA i pulsom se preskaču. Specifičan CSV format neke verzije originalne aplikacije može tražiti doradu parsera.
+Ovo okruženje nema pun Android SDK, pa **nisam mogao potvrditi pun Gradle build ni instalaciju na S25**.
 
-## Privatnost i ograničenja
+## Offline test bez Android SDK-a
 
-Nema internet dozvole, naloga, reklama ni SDK-a za analitiku. Slike iz kamere su privremene i brišu se nakon obrade; izabrane slike iz galerije se ne kopiraju u bazu. Baza se čuva lokalno. `android:allowBackup=false` onemogućava automatski Android backup, pa povremeno izvezi CSV i čuvaj ga na bezbednom mestu.
+`javac -d /tmp/bp app/src/main/java/rs/local/mojpritisak/{Reading,CsvImporter,BpParser,FlexibleSevenSegmentReader}.java ParserSmokeTest.java CsvSmokeTest.java FlexibleSegmentSmokeTest.java`
 
-OCR oslanja se na kvalitet fotografije i na dizajn ekrana aparata; može naročito grešiti kod sedmosegmentnog displeja ili refleksije. Zato su sva polja izmenjiva i obavezna je provera pre čuvanja. Aplikacija ne meri krvni pritisak i nije medicinsko sredstvo.
+`java -cp /tmp/bp ParserSmokeTest`
 
-## Projekat
+`java -cp /tmp/bp rs.local.mojpritisak.CsvSmokeTest`
 
-- Java / Android SDK 35, min SDK 26.
-- `MainActivity.java` – ekran, snimanje, rad sa podacima, CSV/PDF, ML Kit.
-- `BpParser.java` – heuristike čitanja očitanih brojeva.
-- `ReadingsDb.java` – SQLite podaci.
-- `CsvImporter.java` – import pojedinačnih BP merenja.
-- `PressureChart.java` – grafikon dnevnih proseka.
-- `.github/workflows/build-apk.yml` – automatski Android build APK-a.
+`java -cp /tmp/bp FlexibleSegmentSmokeTest /putanja/sys.png /putanja/dia.png /putanja/pulse.png`
 
-Provera čistog Java parsera: `javac -d /tmp/bptest app/src/main/java/rs/local/mojpritisak/BpParser.java ParserSmokeTest.java && java -cp /tmp/bptest ParserSmokeTest`.
+Tri putanje su tvoje isečene numeričke oblasti sa vrednostima 129, 73, 63. Slika i tvoj lični CSV nisu uključeni u arhivu.
 
-## Verzija 1.1 – dijagnostika (Samsung Galaxy S25)
+## Privatnost i sačuvane funkcije
 
-- Izmenjen unos iz galerije: čitanje `content://` slike preko `ContentResolver`, obrada u pozadinskoj niti, bez pretpostavke da je fajl dostupan kao klasična putanja.
-- Fotografije 720×720 ostaju u punoj rezoluciji. Čita se i EXIF rotacija (originalni Samsung JPG je 90° bočno rotiran u sirovim pikselima). Ako OCR ne pročita sve tri vrednosti, prikazuje prepoznat tekst i omogućava dopunu.
-- Greške nisu sakrivene: detalji mogu da se kopiraju iz dijaloga (nema automatskog slanja). Ako proces padne, lokalni izveštaj se prikazuje pri sledećem pokretanju.
-- CSV uvoz ide u pozadini; podržani su UTF-8/UTF-16 BOM, Instant BP pojedinačni zapisi i sopstveni CSV. Zbirni dnevni CSV se odbija umesto pogrešnog uvoza.
-- Uvoz merenja upisuje sve redove atomskom SQLite transakcijom.
-
-**Važno:** Build je i dalje potrebno uraditi kroz GitHub Actions; ovaj kod nije testiran na pravom S25, a pouzdanost ML Kit OCR-a na sedmosegmentnom Omron displeju nije zagarantovana.
-
-**Ažuriranje APK-a:** Ako Android prijavi da nova verzija ne može da se instalira preko prethodne, moguće je da GitHub Actions koristi različite debug sertifikate. Sačuvaj postojeće podatke u CSV pre deinstalacije stare verzije.
-
-## Verzija 1.2 – potvrđen Instant BP CSV format
-
-Pregledan je izvezeni CSV sa zaglavljem `Date,Time,Top,Bottom,Pulse,Med,L/R,Arm or wrist,Posture,Note`.
-Parser sada podržava `Top` i `Bottom` kao odgovarajuće kolone za SYS i DIA.
-Lokalnim testom sa stvarnim korisničkim CSV-om potvrđen je uspešan prolazak svih 87 merenja kroz Java parser.
-Korisnički CSV nije uključen u izvorni ZIP radi privatnosti.
-
-Za brzi uvoz u postojeći APK priložen je i zaseban konvertovani CSV fajl koji koristi
-`Systolic` i `Diastolic` nazive kolona i zadržava sva merenja.
-
-**Napomena:** Android build v1.2 i OCR funkcija nisu testirani na telefonu;
-za tačan Android uzrok zatvaranja aplikacije potreban je crash log ili dijagnostički izveštaj iz v1.1+.
-
-## Verzija 1.3 – sedmosegmentni LCD i crash fix
-
-**Ispravljena greška pri „Dopuni ručno“:** prethodno je Java automatski pretvarala
-`null` (`Integer`) u `int` kod izraza `existing!=null?existing.sys:scanned!=null?scanned.sys:null`.
-Sada su polja pripremljena zasebno, pa se mogu otvoriti i kada OCR ne pronađe nijednu vrednost.
-
-**Dodat `Rs3LcdReader.java`:** offline prepoznavanje sedam segmenata direktno iz piksela,
-nezavisno od teksta koji čita ML Kit. Pokušava se samo kada ML Kit na fotografiji
-prepozna natpise „OMRON“ i „RS3“. Prepoznavanje koristi zone orijentisanog, približno
-kvadratnog snimka celog uređaja, kao na dostavljenoj Instant BP fotografiji (720×720),
-uz normalizaciju rezolucije. Na probnoj korisničkoj fotografiji poseban Java test
-potvrdio je **129/73 mmHg i puls 63/min**; proverena je i slabije kompresovana verzija.
-Fotografija korisnika nije uključena u ZIP projekat.
-
-Ovaj čitač **nije univerzalni OCR** i nije zagarantovan uspeh ako je aparat drugačije
-pozicioniran, u drugoj perspektivi ili ako je fotografija jako tamna. Ako procena nije
-pouzdana, aplikacija neće izmišljati broj iz štampanih oznaka 135/85 desno od ekrana:
-otvoriće se ručni unos sa praznim poljima. Korisnik mora vizuelno potvrditi sva tri broja.
-
-### Lokalni test Java LCD čitača (opciono)
-
-`Rs3LcdSmokeTest.java` može da se pokrene sa sopstvenom, uspravno orijentisanom
-720×720 PNG/JPG datotekom koja prikazuje referentni Omron RS3 snimak:
-
-```bash
-javac -d /tmp/rs3classes app/src/main/java/rs/local/mojpritisak/Rs3LcdReader.java Rs3LcdSmokeTest.java
-java -cp /tmp/rs3classes Rs3LcdSmokeTest /putanja/do/fotografije-uspravno.png
-```
-
-**Instalacija/ažuriranje:** Kod Android SDK-a dalje je potreban GitHub Actions / Android
-Studio build. Ako APK nije potpisan istim ključem kao instalirana aplikacija, sačuvaj
-CSV kroz „Izvezi CSV“ pre deinstalacije stare verzije. `android:allowBackup=false` znači
-da se lokalna SQLite baza neće automatski vratiti nakon deinstalacije.
-
-**Validacija:** `javac` test specifičnog LCD čitača i postojeći Java OCR/CSV smoke testovi
-prošli su lokalno. Kompletan Android/Gradle build i test na Samsung Galaxy S25 nisu izvršeni
-u ovom okruženju.
+Nema internet dozvole, oglasa i analitike. SQLite baza, grafikon, proseci, ručni unos, izvoz u PDF i CSV, kao i uvoz Instant BP CSV zaglavlja `Date,Time,Top,Bottom,Pulse` ostaju nepromenjeni. ML Kit model je ugrađen u aplikaciju.

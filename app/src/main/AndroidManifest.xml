@@ -3,6 +3,8 @@
           xmlns:tools="http://schemas.android.com/tools">
     <!-- Offline-only app: refuse any transitive library Internet permission. -->
     <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:allowBackup="false"
         android:fullBackupContent="false"
@@ -10,6 +12,8 @@
         android:icon="@drawable/ic_launcher"
         android:theme="@style/AppTheme"
         android:supportsRtl="true">
+        <activity android:name=".LiveScanActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".ScanPhotoActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity
             android:name=".MainActivity"
             android:exported="true">
